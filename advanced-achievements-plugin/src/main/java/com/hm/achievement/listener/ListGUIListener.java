@@ -19,6 +19,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
+import com.hm.achievement.category.Category;
 import com.hm.achievement.category.MultipleAchievements;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.gui.AchievementInventoryHolder;
@@ -33,13 +34,13 @@ import com.hm.achievement.gui.MainGUI;
 @Singleton
 public class ListGUIListener implements Listener {
 
-	private final Set<String> disabledCategories;
+	private final Set<Category> disabledCategories;
 	private final MainGUI mainGUI;
 	private final CategoryGUI categoryGUI;
 	private final Material lockedMaterial;
 
 	@Inject
-	public ListGUIListener(int serverVersion, Set<String> disabledCategories, MainGUI mainGUI, CategoryGUI categoryGUI) {
+	public ListGUIListener(int serverVersion, Set<Category> disabledCategories, MainGUI mainGUI, CategoryGUI categoryGUI) {
 		this.disabledCategories = disabledCategories;
 		this.mainGUI = mainGUI;
 		this.categoryGUI = categoryGUI;
@@ -85,15 +86,14 @@ public class ListGUIListener implements Listener {
 	 * @return true if the button is clicked, false otherwise
 	 */
 	private boolean isButtonClicked(InventoryClickEvent event, ItemStack button) {
-		if (event.getCurrentItem().getDurability() == button.getDurability()
-				&& event.getCurrentItem().getType() == button.getType()) {
+		if (event.getCurrentItem().isSimilar(button)) {
 			// Clicked item seems to be the button. But player could have clicked on item in his personal inventory that
 			// matches the properties of the button used by Advanced Achievements. The first item matching the
 			// properties of the button is the real one, check that this is indeed the clicked one.
 			Map<Integer, ItemStack> backButtonCandidates = new TreeMap<>(
 					event.getInventory().all(event.getCurrentItem().getType()));
 			for (Entry<Integer, ItemStack> entry : backButtonCandidates.entrySet()) {
-				if (entry.getValue().getDurability() == event.getCurrentItem().getDurability()) {
+				if (event.getCurrentItem().isSimilar(entry.getValue())) {
 					// Found real button. Did the player click on it?
 					if (entry.getKey() == event.getRawSlot()) {
 						return true;

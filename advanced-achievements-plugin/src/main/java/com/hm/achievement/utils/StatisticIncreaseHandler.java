@@ -85,14 +85,14 @@ public class StatisticIncreaseHandler implements Reloadable {
 							.displayName(mainConfig.getString(achievementPath + ".DisplayName"))
 							.message(mainConfig.getString(achievementPath + ".Message"))
 							.commandRewards(rewardParser.getCommandRewards(rewardPath, player))
-							.commandMessage(rewardParser.getCustomCommandMessage(rewardPath))
+							.commandMessage(rewardParser.getCustomCommandMessages(rewardPath))
 							.itemReward(rewardParser.getItemReward(rewardPath))
 							.moneyReward(rewardParser.getRewardAmount(rewardPath, "Money"))
 							.experienceReward(rewardParser.getRewardAmount(rewardPath, "Experience"))
 							.maxHealthReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxHealth"))
 							.maxOxygenReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxOxygen"));
 
-					Bukkit.getServer().getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
+					Bukkit.getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
 				}
 			} else {
 				// Entries in List sorted in increasing order, all subsequent thresholds will fail the condition.

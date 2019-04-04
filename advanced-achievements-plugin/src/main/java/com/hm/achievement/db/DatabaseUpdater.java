@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -25,6 +24,7 @@ import com.hm.achievement.category.MultipleAchievements;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.exception.PluginLoadError;
 import com.hm.achievement.utils.MaterialHelper;
+import com.hm.achievement.utils.StringHelper;
 
 /**
  * Class used to update the database schema.
@@ -64,29 +64,18 @@ public class DatabaseUpdater {
 	 * works if the tables had the default name. It does not support multiple successive table renamings.
 	 * 
 	 * @param databaseManager
-	 * @param databaseAddress
 	 * @throws PluginLoadError
 	 */
-	void renameExistingTables(AbstractDatabaseManager databaseManager, String databaseAddress) throws PluginLoadError {
+	void renameExistingTables(AbstractDatabaseManager databaseManager) throws PluginLoadError {
 		// If a prefix is set in the config, check whether the tables with the default names exist. If so do renaming.
 		if (StringUtils.isNotBlank(databaseManager.getPrefix())) {
 			Connection conn = databaseManager.getSQLConnection();
 			try (Statement st = conn.createStatement()) {
-				ResultSet rs;
-				if (databaseManager instanceof SQLiteDatabaseManager) {
-					rs = st.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='achievements'");
-				} else if (databaseManager instanceof MySQLDatabaseManager) {
-					rs = st.executeQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='"
-							+ databaseAddress.substring(databaseAddress.lastIndexOf('/') + 1)
-							+ "' AND table_name ='achievements'");
-				} else {
-					rs = st.executeQuery(
-							"SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'achievements' AND c.relkind = 'r'");
-				}
-
-				// Table achievements still has its default name (ie. no prefix), but a prefix is set in the
-				// configuration; do a renaming of all tables.
+				ResultSet rs = conn.getMetaData().getTables(null, null, "achievements", null);
+				// If the achievements table still has its default name (ie. no prefix), but a prefix is set in the
+				// configuration, do a renaming of all tables.
 				if (rs.next()) {
+					logger.info("Adding " + databaseManager.getPrefix() + " prefix to database table names, please wait...");
 					st.addBatch("ALTER TABLE achievements RENAME TO " + databaseManager.getPrefix() + "achievements");
 					for (NormalAchievements category : NormalAchievements.values()) {
 						st.addBatch("ALTER TABLE " + category.toDBName() + " RENAME TO " + databaseManager.getPrefix()
@@ -115,11 +104,11 @@ public class DatabaseUpdater {
 		Connection conn = databaseManager.getSQLConnection();
 		try (Statement st = conn.createStatement()) {
 			st.addBatch("CREATE TABLE IF NOT EXISTS " + databaseManager.getPrefix()
-					+ "achievements (playername char(36),achievement varchar(64),description varchar(128),date DATE,PRIMARY KEY (playername, achievement))");
+					+ "achievements (playername char(36),achievement varchar(64),description varchar(128),date TIMESTAMP,PRIMARY KEY (playername, achievement))");
 
 			for (MultipleAchievements category : MultipleAchievements.values()) {
 				st.addBatch("CREATE TABLE IF NOT EXISTS " + databaseManager.getPrefix() + category.toDBName()
-						+ " (playername char(36)," + category.toSubcategoryDBName() + " varchar(51)," + category.toDBName()
+						+ " (playername char(36)," + category.toSubcategoryDBName() + " varchar(192)," + category.toDBName()
 						+ " INT,PRIMARY KEY(playername, " + category.toSubcategoryDBName() + "))");
 			}
 
@@ -184,7 +173,7 @@ public class DatabaseUpdater {
 		Connection conn = databaseManager.getSQLConnection();
 		try (Statement st = conn.createStatement()) {
 			// Create new temporary table.
-			st.execute("CREATE TABLE tempTable (playername char(36)," + category.toSubcategoryDBName() + " varchar(64),"
+			st.execute("CREATE TABLE tempTable (playername char(36)," + category.toSubcategoryDBName() + " varchar(192),"
 					+ tableName + " INT UNSIGNED,PRIMARY KEY(playername, " + category.toSubcategoryDBName() + "))");
 			try (PreparedStatement prep = conn.prepareStatement("INSERT INTO tempTable VALUES (?,?,?);")) {
 				ResultSet rs = st.executeQuery("SELECT * FROM " + tableName + "");
@@ -250,11 +239,8 @@ public class DatabaseUpdater {
 				logger.info("Updating database table with date datatype for achievements, please wait...");
 				// Create new temporary table.
 				st.execute("CREATE TABLE tempTable (playername char(36),achievement varchar(64),description varchar(128),"
-						+ "date DATE,PRIMARY KEY (playername, achievement))");
+						+ "date TIMESTAMP,PRIMARY KEY (playername, achievement))");
 				try (PreparedStatement prep = conn.prepareStatement("INSERT INTO tempTable VALUES (?,?,?,?);")) {
-					// Early versions of the plugin added colors to the date. We have to get rid of them by using a
-					// regex pattern, else parsing will fail.
-					Pattern regexPattern = Pattern.compile("&([a-f]|[0-9]){1}");
 					// Old date format, which was stored as a string.
 					SimpleDateFormat oldFormat = new SimpleDateFormat("dd/MM/yyyy");
 					// Load entire achievements table into memory.
@@ -277,8 +263,9 @@ public class DatabaseUpdater {
 
 					try {
 						for (String date : oldDates) {
-							// Convert to SQL date format.
-							newDates.add(new Date(oldFormat.parse(regexPattern.matcher(date).replaceAll("")).getTime()));
+							// Convert to SQL date format. Early versions of the plugin added colors to the date. We
+							// have to get rid of them else parsing will fail.
+							newDates.add(new Date(oldFormat.parse(StringHelper.removeFormattingCodes(date)).getTime()));
 						}
 					} catch (ParseException e) {
 						logger.log(Level.SEVERE, "Database error while parsing dates:", e);
@@ -306,37 +293,60 @@ public class DatabaseUpdater {
 				conn.setAutoCommit(true);
 			}
 		} catch (SQLException e) {
-			logger.log(Level.SEVERE, "Database error while updating old connections table:", e);
+			logger.log(Level.SEVERE, "Database error while updating old achievements table:", e);
 		}
 	}
 
 	/**
-	 * Increases size of the mobname column of the kills table to accommodate new parameters such as
-	 * specificplayer-56c79b19-4500-466c-94ea-514a755fdd09.
+	 * Updates the database achievements table. The table is now using a timestamp type for the date column.
 	 * 
 	 * @param databaseManager
 	 */
-	void updateOldDBMobnameSize(AbstractDatabaseManager databaseManager) {
-		Connection conn = databaseManager.getSQLConnection();
-		// SQLite ignores size for varchar datatype.
-		if (!(databaseManager instanceof SQLiteDatabaseManager)) {
-			int size = 51;
+	void updateOldDBToTimestamps(AbstractDatabaseManager databaseManager) {
+		// SQLite unaffected by this change, H2 support added with timestamp from the start.
+		if (databaseManager instanceof AbstractRemoteDatabaseManager) {
+			Connection conn = databaseManager.getSQLConnection();
 			try (Statement st = conn.createStatement()) {
-				ResultSet rs = st.executeQuery("SELECT mobname FROM " + databaseManager.getPrefix() + "kills LIMIT 1");
-				size = rs.getMetaData().getPrecision(1);
-				// Old kills table prior to version 4.2.1 contained a capacity of only 32 chars.
-				if (size == 32) {
-					logger.info("Updating kills database table with new mobname column, please wait...");
-					// Increase size of table.
-					if (databaseManager instanceof PostgreSQLDatabaseManager) {
-						st.execute("ALTER TABLE " + databaseManager.getPrefix()
-								+ "kills ALTER COLUMN mobname TYPE varchar(51)");
-					} else {
-						st.execute("ALTER TABLE " + databaseManager.getPrefix() + "kills MODIFY mobname varchar(51)");
-					}
+				ResultSet rs = st.executeQuery("SELECT date FROM " + databaseManager.getPrefix() + "achievements LIMIT 1");
+				String type = rs.getMetaData().getColumnTypeName(1);
+				// Old column type for versions prior to 5.11.0 was date.
+				if ("date".equalsIgnoreCase(type)) {
+					logger.info("Updating database table with timestamp datatype for achievements, please wait...");
+					String query = databaseManager instanceof MySQLDatabaseManager
+							? "ALTER TABLE " + databaseManager.getPrefix() + "achievements MODIFY date TIMESTAMP"
+							: "ALTER TABLE " + databaseManager.getPrefix() + "achievements ALTER COLUMN date TYPE TIMESTAMP";
+					st.execute(query);
 				}
 			} catch (SQLException e) {
-				logger.log(Level.SEVERE, "Database error while updating old kills table:", e);
+				logger.log(Level.SEVERE, "Database error while updating old achievements table:", e);
+			}
+		}
+	}
+
+	/**
+	 * Increases the size of the sub-category column of MultipleAchievements database tables to accommodate new
+	 * parameters such as specificplayer-56c79b19-4500-466c-94ea-514a755fdd09 or grouped sub-categories.
+	 * 
+	 * @param databaseManager
+	 * @param category
+	 */
+	void updateOldDBColumnSize(AbstractDatabaseManager databaseManager, MultipleAchievements category) {
+		// SQLite ignores size for varchar datatype. H2 support was added after this was an issue.
+		if (!(databaseManager instanceof AbstractFileDatabaseManager)) {
+			Connection conn = databaseManager.getSQLConnection();
+			try (Statement st = conn.createStatement()) {
+				ResultSet rs = st.executeQuery("SELECT " + category.toSubcategoryDBName() + " FROM "
+						+ databaseManager.getPrefix() + category.toDBName() + " LIMIT 1");
+				if (rs.getMetaData().getPrecision(1) < 192) {
+					logger.info("Updating " + category.toDBName() + " database table with extended column, please wait...");
+					// Increase size of table.
+					String alterOperation = databaseManager instanceof PostgreSQLDatabaseManager
+							? "ALTER COLUMN " + category.toSubcategoryDBName() + " TYPE varchar(192)"
+							: "MODIFY " + category.toSubcategoryDBName() + " varchar(192)";
+					st.execute("ALTER TABLE " + databaseManager.getPrefix() + category.toDBName() + " " + alterOperation);
+				}
+			} catch (SQLException e) {
+				logger.log(Level.SEVERE, "Database error while updating old " + category.toDBName() + " table:", e);
 			}
 		}
 	}
@@ -353,7 +363,7 @@ public class DatabaseUpdater {
 		Connection conn = databaseManager.getSQLConnection();
 		try (Statement st = conn.createStatement()) {
 			// Create new temporary table.
-			st.execute("CREATE TABLE tempTable (playername char(36)," + category.toSubcategoryDBName() + " varchar(64),"
+			st.execute("CREATE TABLE tempTable (playername char(36)," + category.toSubcategoryDBName() + " varchar(192),"
 					+ tableName + " INT UNSIGNED,PRIMARY KEY(playername, " + category.toSubcategoryDBName() + "))");
 			try (PreparedStatement prep = conn.prepareStatement("INSERT INTO tempTable VALUES (?,?,?);")) {
 				ResultSet rs = st.executeQuery("SELECT * FROM " + tableName + "");
@@ -400,12 +410,12 @@ public class DatabaseUpdater {
 	 */
 	private String convertToNewMaterialKey(String oldMaterialKey) {
 		List<String> newMaterials = new ArrayList<>();
-		for (String oldMaterial : oldMaterialKey.split("\\|")) {
-			String[] parts = oldMaterial.split(":");
-			Optional<Material> material = materialHelper.matchMaterial(parts[0], "the database (" + oldMaterialKey + ")");
+		for (String oldMaterial : StringUtils.split(oldMaterialKey, '|')) {
+			Optional<Material> material = materialHelper.matchMaterial(StringUtils.substringBefore(oldMaterialKey, ":"),
+					"the database (" + oldMaterialKey + ")");
 			if (material.isPresent()) {
-				newMaterials.add(parts.length > 1 ? material.get().name().toLowerCase() + ":" + parts[1]
-						: material.get().name().toLowerCase());
+				String metadata = StringUtils.substringAfter(oldMaterialKey, ":");
+				newMaterials.add(material.get().name().toLowerCase() + (metadata.isEmpty() ? "" : ":" + metadata));
 			} else {
 				newMaterials.add(oldMaterial);
 			}

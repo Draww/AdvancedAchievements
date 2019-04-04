@@ -20,6 +20,7 @@ import com.hm.achievement.db.AbstractDatabaseManager;
 import com.hm.achievement.lang.Lang;
 import com.hm.achievement.lang.LangHelper;
 import com.hm.achievement.lang.command.CmdLang;
+import com.hm.achievement.utils.SoundPlayer;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 import com.hm.mcshared.particle.ParticleEffect;
 
@@ -42,11 +43,13 @@ public abstract class AbstractRankingCommand extends AbstractCommand {
 	private final int serverVersion;
 	private final Lang languageHeader;
 	private final AbstractDatabaseManager databaseManager;
+	private final SoundPlayer soundPlayer;
 
 	private ChatColor configColor;
 	private int configTopList;
 	private boolean configAdditionalEffects;
 	private boolean configSound;
+	private String configSoundRanking;
 	private String langPeriodAchievement;
 	private String langPlayerRank;
 	private String langNotRanked;
@@ -57,22 +60,24 @@ public abstract class AbstractRankingCommand extends AbstractCommand {
 
 	AbstractRankingCommand(CommentedYamlConfiguration mainConfig, CommentedYamlConfiguration langConfig,
 			StringBuilder pluginHeader, Logger logger, int serverVersion, Lang languageHeader,
-			AbstractDatabaseManager databaseManager) {
+			AbstractDatabaseManager databaseManager, SoundPlayer soundPlayer) {
 		super(mainConfig, langConfig, pluginHeader);
 		this.logger = logger;
 		this.serverVersion = serverVersion;
 		this.languageHeader = languageHeader;
 		this.databaseManager = databaseManager;
+		this.soundPlayer = soundPlayer;
 	}
 
 	@Override
 	public void extractConfigurationParameters() {
 		super.extractConfigurationParameters();
 
-		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5").charAt(0));
+		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5"));
 		configTopList = mainConfig.getInt("TopList", 5);
 		configAdditionalEffects = mainConfig.getBoolean("AdditionalEffects", true);
 		configSound = mainConfig.getBoolean("Sound", true);
+		configSoundRanking = mainConfig.getString("SoundRanking", "ENTITY_FIREWORK_ROCKET_BLAST").toUpperCase();
 
 		langPeriodAchievement = pluginHeader + LangHelper.get(languageHeader, langConfig);
 		langPlayerRank = pluginHeader + LangHelper.get(CmdLang.PLAYER_RANK, langConfig) + " " + configColor;
@@ -127,7 +132,7 @@ public abstract class AbstractRankingCommand extends AbstractCommand {
 		List<String> rankingMessages = new ArrayList<>();
 		int currentRank = 1;
 		for (Entry<String, Integer> ranking : cachedSortedRankings.entrySet()) {
-			String playerName = Bukkit.getServer().getOfflinePlayer(UUID.fromString(ranking.getKey())).getName();
+			String playerName = Bukkit.getOfflinePlayer(UUID.fromString(ranking.getKey())).getName();
 			if (playerName != null) {
 				// Color the name of the player if he is in the top list.
 				ChatColor color = playerName.equals(sender.getName()) ? configColor : ChatColor.GRAY;
@@ -178,7 +183,6 @@ public abstract class AbstractRankingCommand extends AbstractCommand {
 	 * @param player
 	 */
 	private void launchEffects(Player player) {
-		// Play special effect when in top list.
 		if (configAdditionalEffects) {
 			if (serverVersion >= 13) {
 				player.spawnParticle(Particle.PORTAL, player.getLocation(), 100, 0, 1, 0, 0.5f);
@@ -191,9 +195,9 @@ public abstract class AbstractRankingCommand extends AbstractCommand {
 			}
 		}
 
-		// Play special sound when in top list.
 		if (configSound) {
-			playSpecialSound(player, serverVersion);
+			soundPlayer.play(player, configSoundRanking, "ENTITY_FIREWORK_ROCKET_BLAST", "ENTITY_FIREWORK_LARGE_BLAST",
+					"FIREWORK_BLAST");
 		}
 	}
 }

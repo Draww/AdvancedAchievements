@@ -12,7 +12,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import com.earth2me.essentials.Essentials;
-import com.earth2me.essentials.User;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.db.CacheManager;
 import com.hm.achievement.utils.RewardParser;
@@ -51,35 +50,35 @@ public class AchievePlayTimeRunnable extends StatisticIncreaseHandler implements
 	public void extractConfigurationParameters() {
 		super.extractConfigurationParameters();
 
-		configIgnoreAFKPlayedTime = essentials == null ? false : mainConfig.getBoolean("IgnoreAFKPlayedTime", false);
+		configIgnoreAFKPlayedTime = essentials != null && mainConfig.getBoolean("IgnoreAFKPlayedTime", false);
 	}
 
 	@Override
 	public void run() {
-		Bukkit.getServer().getOnlinePlayers().stream().forEach(this::updateTime);
-
-		previousRunMillis = System.currentTimeMillis();
+		long currentTime = System.currentTimeMillis();
+		Bukkit.getOnlinePlayers().stream().forEach(p -> updateTime(p, currentTime));
+		previousRunMillis = currentTime;
 	}
 
 	/**
 	 * Updates play time if all conditions are met and awards achievements if necessary.
 	 * 
 	 * @param player
+	 * @param currentTime
 	 */
-	private void updateTime(Player player) {
+	private void updateTime(Player player, long currentTime) {
 		if (!shouldIncreaseBeTakenIntoAccount(player, NormalAchievements.PLAYEDTIME)) {
 			return;
 		}
 
 		if (configIgnoreAFKPlayedTime) {
-			User user = essentials.getUser(player);
 			// If player is AFK, don't update played time.
-			if (user != null && user.isAfk()) {
+			if (essentials.getUser(player).isAfk()) {
 				return;
 			}
 		}
 
-		int millisSinceLastRun = (int) (System.currentTimeMillis() - previousRunMillis);
+		int millisSinceLastRun = (int) (currentTime - previousRunMillis);
 		long totalMillis = cacheManager.getAndIncrementStatisticAmount(NormalAchievements.PLAYEDTIME, player.getUniqueId(),
 				millisSinceLastRun);
 		// Thresholds in the configuration are in hours.

@@ -1,7 +1,7 @@
 package com.hm.achievement.command.completer;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -16,94 +16,106 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 
-import com.hm.achievement.category.MultipleAchievements;
-import com.hm.achievement.category.NormalAchievements;
-import com.hm.achievement.lifecycle.Reloadable;
+import com.hm.achievement.category.CommandAchievements;
+import com.hm.achievement.command.executable.AbstractCommand;
+import com.hm.achievement.command.executable.CommandSpec;
+import com.hm.achievement.command.executable.EasterEggCommand;
+import com.hm.achievement.command.executable.GenerateCommand;
+import com.hm.achievement.command.executable.Upgrade13Command;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 
 /**
  * Class in charge of handling auto-completion for achievements and categories when using /aach check, /aach reset,
  * /aach give or /aach delete commands.
- * 
- * @author Pyves
  *
+ * @author Pyves
  */
 @Singleton
-public class CommandTabCompleter implements TabCompleter, Reloadable {
+public class CommandTabCompleter implements TabCompleter {
 
 	private static final int MAX_LIST_LENGTH = 50;
 
-	private final Set<String> enabledCategoriesWithSubcategories = new HashSet<>();
 	private final CommentedYamlConfiguration mainConfig;
-	private final Map<String, String> achievementsAndDisplayNames;
-	private final Set<String> disabledCategories;
-
-	private Set<String> configCommandsKeys;
+	private final Map<String, String> namesToDisplayNames;
+	private final Map<String, String> displayNamesToNames;
+	private final Set<String> enabledCategoriesWithSubcategories;
+	private final Set<CommandSpec> commandSpecs;
+	private final int serverVersion;
 
 	@Inject
 	public CommandTabCompleter(@Named("main") CommentedYamlConfiguration mainConfig,
-			Map<String, String> achievementsAndDisplayNames, Set<String> disabledCategories) {
+			@Named("ntd") Map<String, String> namesToDisplayNames, @Named("dtn") Map<String, String> displayNamesToNames,
+			Set<String> enabledCategoriesWithSubcategories, Set<AbstractCommand> commands, int serverVersion) {
 		this.mainConfig = mainConfig;
-		this.achievementsAndDisplayNames = achievementsAndDisplayNames;
-		this.disabledCategories = disabledCategories;
-	}
-
-	@Override
-	public void extractConfigurationParameters() {
-		configCommandsKeys = mainConfig.getShallowKeys("Commands");
-
-		enabledCategoriesWithSubcategories.clear();
-		for (MultipleAchievements category : MultipleAchievements.values()) {
-			for (String subcategory : mainConfig.getShallowKeys(category.toString())) {
-				enabledCategoriesWithSubcategories.add(category + "." + StringUtils.deleteWhitespace(subcategory));
-			}
-		}
-		for (NormalAchievements category : NormalAchievements.values()) {
-			enabledCategoriesWithSubcategories.add(category.toString());
-		}
-		enabledCategoriesWithSubcategories.add("Commands");
-		// Only auto-complete with non-disabled categories.
-		enabledCategoriesWithSubcategories.removeAll(disabledCategories);
+		this.namesToDisplayNames = namesToDisplayNames;
+		this.displayNamesToNames = displayNamesToNames;
+		this.enabledCategoriesWithSubcategories = enabledCategoriesWithSubcategories;
+		this.serverVersion = serverVersion;
+		this.commandSpecs = commands.stream()
+				.filter(c -> !(c instanceof EasterEggCommand || c instanceof Upgrade13Command
+						|| serverVersion < 12 && c instanceof GenerateCommand))
+				.map(c -> c.getClass().getAnnotation(CommandSpec.class))
+				.collect(Collectors.toSet());
 	}
 
 	@Override
 	public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-		if (!"aach".equals(command.getName()) || args.length == 3 && !"add".equalsIgnoreCase(args[0])
-				|| args.length == 4 && "add".equalsIgnoreCase(args[0])) {
-			// Complete with players.
-			return null;
-		} else if (args.length == 2 && "reset".equalsIgnoreCase(args[0])) {
-			return getPartialList(enabledCategoriesWithSubcategories, args[1]);
-		} else if (args.length == 3 && "add".equalsIgnoreCase(args[0])) {
-			return getPartialList(enabledCategoriesWithSubcategories, args[2]);
-		} else if (args.length == 2 && "give".equalsIgnoreCase(args[0])) {
-			return getPartialList(configCommandsKeys, args[1]);
-		} else if (args.length == 2 && ("delete".equalsIgnoreCase(args[0]) || "check".equalsIgnoreCase(args[0]))) {
-			return getPartialList(achievementsAndDisplayNames.keySet(), args[1]);
+		if (shouldReturnPlayerList(command, args)) {
+			return null; // Complete with players.
 		}
-		// No completion.
-		return Collections.singletonList("");
+
+		String aachCommand = args[0];
+		Collection<String> options = Collections.emptyList();
+		if (args.length == 2 && "reset".equalsIgnoreCase(aachCommand)) {
+			options = enabledCategoriesWithSubcategories;
+		} else if (args.length == 2 && "give".equalsIgnoreCase(aachCommand)) {
+			options = mainConfig.getShallowKeys(CommandAchievements.COMMANDS.toString());
+		} else if (args.length == 2 && StringUtils.equalsAnyIgnoreCase(aachCommand, "check", "delete")) {
+			options = namesToDisplayNames.keySet();
+		} else if (args.length == 2 && "inspect".equalsIgnoreCase(aachCommand)) {
+			options = displayNamesToNames.keySet();
+		} else if (args.length == 2 && "add".equalsIgnoreCase(aachCommand)) {
+			options = Collections.singleton("1");
+		} else if (args.length == 3 && "add".equalsIgnoreCase(aachCommand)) {
+			options = enabledCategoriesWithSubcategories;
+		} else if (args.length == 1) {
+			options = commandSpecs.stream()
+					.filter(cs -> cs.permission().isEmpty() || sender.hasPermission("achievement." + cs.permission()))
+					.map(CommandSpec::name).collect(Collectors.toSet());
+		}
+		return getPartialList(options, args[args.length - 1]);
 	}
 
 	/**
 	 * Returns a partial list based on the input set. Members of the returned list must start with what the player has
-	 * types so far. The list also has a limited length to avoid filling the player's screen.
-	 * 
-	 * @param fullSet
+	 * types so far. The list also has a limited length prior to Minecraft 1.13 to avoid filling the player's screen.
+	 *
+	 * @param options
 	 * @param prefix
-	 * @return a list limited in length, containing elements matching the prefix,
+	 * @return a list limited in length, containing elements matching the prefix.
 	 */
-	private List<String> getPartialList(Set<String> fullSet, String prefix) {
+	private List<String> getPartialList(Collection<String> options, String prefix) {
+		// Find matching options
+		// Replace spaces with an Open Box character to prevent completing wrong word. Prevented Behaviour:
+		// T -> Tamer -> Teleport Man -> Teleport The Avener -> Teleport The The Smelter
 		// Sort matching elements by alphabetical order.
-		List<String> fullList = fullSet.stream().filter(s -> s.toLowerCase().startsWith(prefix.toLowerCase()))
-				.map(s -> StringUtils.replace(s, " ", "\u2423")).sorted().collect(Collectors.toList());
+		List<String> allOptions = options.stream()
+				.filter(s1 -> s1.toLowerCase().startsWith(prefix.toLowerCase()))
+				.map(s -> s.replace(' ', '\u2423'))
+				.sorted()
+				.collect(Collectors.toList());
 
-		if (fullList.size() > MAX_LIST_LENGTH) {
-			List<String> partialList = fullList.subList(0, MAX_LIST_LENGTH - 2);
+		if (serverVersion < 13 && allOptions.size() > MAX_LIST_LENGTH) {
+			allOptions = allOptions.subList(0, MAX_LIST_LENGTH - 1);
 			// Suspension points to show that list was truncated.
-			partialList.add("\u2022\u2022\u2022");
-			return partialList;
+			allOptions.add("\u2022\u2022\u2022");
 		}
-		return fullList;
+		return allOptions;
+	}
+
+	private boolean shouldReturnPlayerList(Command command, String[] args) {
+		return !"aach".equals(command.getName())
+				|| args.length == 3 && StringUtils.equalsAnyIgnoreCase(args[0], "give", "reset", "check", "delete")
+				|| args.length == 4 && "add".equalsIgnoreCase(args[0]);
 	}
 }

@@ -26,6 +26,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import com.hm.achievement.AdvancedAchievements;
 import com.hm.achievement.advancement.AchievementAdvancement;
 import com.hm.achievement.advancement.AdvancementManager;
+import com.hm.achievement.category.Category;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.db.AbstractDatabaseManager;
 import com.hm.achievement.db.CacheManager;
@@ -48,13 +49,13 @@ public class ConnectionsListener extends AbstractListener implements Cleanable {
 
 	private final Set<UUID> playersConnectionProcessed = new HashSet<>();
 	private final AdvancedAchievements advancedAchievements;
-	private final Set<String> disabledCategories;
+	private final Set<Category> disabledCategories;
 	private final AbstractDatabaseManager databaseManager;
 
 	@Inject
 	public ConnectionsListener(@Named("main") CommentedYamlConfiguration mainConfig, int serverVersion,
 			Map<String, List<Long>> sortedThresholds, CacheManager cacheManager, RewardParser rewardParser,
-			AdvancedAchievements advancedAchievements, Set<String> disabledCategories,
+			AdvancedAchievements advancedAchievements, Set<Category> disabledCategories,
 			AbstractDatabaseManager databaseManager) {
 		super(mainConfig, serverVersion, sortedThresholds, cacheManager, rewardParser);
 		this.advancedAchievements = advancedAchievements;
@@ -91,9 +92,9 @@ public class ConnectionsListener extends AbstractListener implements Cleanable {
 	 * @param player
 	 */
 	private void scheduleAwardConnection(Player player) {
-		if (!disabledCategories.contains(NormalAchievements.CONNECTIONS.toString())
+		if (!disabledCategories.contains(NormalAchievements.CONNECTIONS)
 				&& !playersConnectionProcessed.contains(player.getUniqueId())) {
-			Bukkit.getServer().getScheduler().scheduleSyncDelayedTask(advancedAchievements, () -> {
+			Bukkit.getScheduler().scheduleSyncDelayedTask(advancedAchievements, () -> {
 				// In addition to the usual reception conditions, check that the player is still connected and that
 				// another runnable hasn't already done the work (even though this method is intended to run once per
 				// player per connection instance, it might happen with some server settings).
@@ -125,14 +126,14 @@ public class ConnectionsListener extends AbstractListener implements Cleanable {
 						.displayName(mainConfig.getString(achievementPath + ".DisplayName"))
 						.message(mainConfig.getString(achievementPath + ".Message"))
 						.commandRewards(rewardParser.getCommandRewards(rewardPath, player))
-						.commandMessage(rewardParser.getCustomCommandMessage(rewardPath))
+						.commandMessage(rewardParser.getCustomCommandMessages(rewardPath))
 						.itemReward(rewardParser.getItemReward(rewardPath))
 						.moneyReward(rewardParser.getRewardAmount(rewardPath, "Money"))
 						.experienceReward(rewardParser.getRewardAmount(rewardPath, "Experience"))
 						.maxHealthReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxHealth"))
 						.maxOxygenReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxOxygen"));
 
-				Bukkit.getServer().getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
+				Bukkit.getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
 			}
 		}
 	}
@@ -145,12 +146,12 @@ public class ConnectionsListener extends AbstractListener implements Cleanable {
 	 * @param player
 	 */
 	private void scheduleAwardAdvancements(Player player) {
-		Bukkit.getServer().getScheduler().scheduleSyncDelayedTask(advancedAchievements, () -> {
+		Bukkit.getScheduler().scheduleSyncDelayedTask(advancedAchievements, () -> {
 			// Check that the player is still connected.
 			if (!player.isOnline()) {
 				return;
 			}
-			Advancement advancement = Bukkit.getServer().getAdvancement(new NamespacedKey(advancedAchievements,
+			Advancement advancement = Bukkit.getAdvancement(new NamespacedKey(advancedAchievements,
 					AdvancementManager.ADVANCED_ACHIEVEMENTS_PARENT));
 			// If no parent, user has not used /aach generate, do not do anything.
 			if (advancement != null) {
@@ -159,8 +160,8 @@ public class ConnectionsListener extends AbstractListener implements Cleanable {
 					advancementProgress.awardCriteria(AchievementAdvancement.CRITERIA_NAME);
 				}
 				for (String achName : databaseManager.getPlayerAchievementNamesList(player.getUniqueId())) {
-					advancement = Bukkit.getServer()
-							.getAdvancement(new NamespacedKey(advancedAchievements, AdvancementManager.getKey(achName)));
+					advancement = Bukkit.getAdvancement(new NamespacedKey(advancedAchievements,
+							AdvancementManager.getKey(achName)));
 					// Matching advancement might not exist if user has not called /aach generate.
 					if (advancement != null) {
 						advancementProgress = player.getAdvancementProgress(advancement);

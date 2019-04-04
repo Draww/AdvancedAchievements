@@ -1,14 +1,9 @@
 package com.hm.achievement.db;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
-import java.sql.Date;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Map;
 import java.util.UUID;
@@ -26,28 +21,11 @@ import com.hm.mcshared.file.CommentedYamlConfiguration;
  * @author Pyves
  *
  */
-public class PostgreSQLDatabaseManager extends AbstractDatabaseManager {
+public class PostgreSQLDatabaseManager extends AbstractRemoteDatabaseManager {
 
 	public PostgreSQLDatabaseManager(@Named("main") CommentedYamlConfiguration mainConfig, Logger logger,
-			Map<String, String> achievementsAndDisplayNames, DatabaseUpdater databaseUpdater) {
-		super(mainConfig, logger, achievementsAndDisplayNames, databaseUpdater);
-	}
-
-	@Override
-	void performPreliminaryTasks() throws ClassNotFoundException, UnsupportedEncodingException {
-		Class.forName("org.postgresql.Driver");
-
-		// Get parameters from the PostgreSQL config category.
-		databaseAddress = mainConfig.getString("POSTGRESQL.Database", "jdbc:postgresql://localhost:5432/minecraft");
-		databaseUser = URLEncoder.encode(mainConfig.getString("POSTGRESQL.User", "root"), StandardCharsets.UTF_8.name());
-		databasePassword = URLEncoder.encode(mainConfig.getString("POSTGRESQL.Password", "root"),
-				StandardCharsets.UTF_8.name());
-	}
-
-	@Override
-	Connection createSQLConnection() throws SQLException {
-		return DriverManager.getConnection(databaseAddress + "?autoReconnect=true" + additionalConnectionOptions + "&user="
-				+ databaseUser + "&password=" + databasePassword);
+			@Named("ntd") Map<String, String> namesToDisplayNames, DatabaseUpdater databaseUpdater) {
+		super(mainConfig, logger, namesToDisplayNames, databaseUpdater, "org.postgresql.Driver", "postgresql");
 	}
 
 	@Override
@@ -62,9 +40,9 @@ public class PostgreSQLDatabaseManager extends AbstractDatabaseManager {
 				ps.setObject(1, uuid, Types.CHAR);
 				ps.setString(2, achName);
 				ps.setString(3, achMessage);
-				ps.setDate(4, new Date(System.currentTimeMillis()));
+				ps.setTimestamp(4, new Timestamp(System.currentTimeMillis()));
 				ps.setString(5, achMessage);
-				ps.setDate(6, new Date(System.currentTimeMillis()));
+				ps.setTimestamp(6, new Timestamp(System.currentTimeMillis()));
 				ps.execute();
 			}
 		}).executeOperation(pool, logger, "registering an achievement");

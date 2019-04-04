@@ -12,17 +12,16 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
+import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Color;
 import org.bukkit.FireworkEffect;
-import org.bukkit.FireworkEffect.Builder;
 import org.bukkit.FireworkEffect.Type;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
-import org.bukkit.Sound;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -45,6 +44,7 @@ import com.hm.achievement.lang.ListenerLang;
 import com.hm.achievement.lifecycle.Reloadable;
 import com.hm.achievement.utils.PlayerAdvancedAchievementEvent;
 import com.hm.achievement.utils.RewardParser;
+import com.hm.achievement.utils.SoundPlayer;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 import com.hm.mcshared.particle.FancyMessageSender;
 import com.hm.mcshared.particle.ParticleEffect;
@@ -69,10 +69,11 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	private final CacheManager cacheManager;
 	private final AdvancedAchievements advancedAchievements;
 	private final RewardParser rewardParser;
-	private final Map<String, String> achievementsAndDisplayNames;
+	private final Map<String, String> namesToDisplayNames;
 	private final AbstractDatabaseManager databaseManager;
 	private final ToggleCommand toggleCommand;
 	private final FireworkListener fireworkListener;
+	private final SoundPlayer soundPlayer;
 
 	private boolean configRewardCommandNotif;
 	private String configFireworkStyle;
@@ -98,8 +99,9 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	public PlayerAdvancedAchievementListener(@Named("main") CommentedYamlConfiguration mainConfig,
 			@Named("lang") CommentedYamlConfiguration langConfig, int serverVersion, Logger logger,
 			StringBuilder pluginHeader, CacheManager cacheManager, AdvancedAchievements advancedAchievements,
-			RewardParser rewardParser, Map<String, String> achievementsAndDisplayNames,
-			AbstractDatabaseManager databaseManager, ToggleCommand toggleCommand, FireworkListener fireworkListener) {
+			RewardParser rewardParser, @Named("ntd") Map<String, String> namesToDisplayNames,
+			AbstractDatabaseManager databaseManager, ToggleCommand toggleCommand, FireworkListener fireworkListener,
+			SoundPlayer soundPlayer) {
 		this.mainConfig = mainConfig;
 		this.langConfig = langConfig;
 		this.serverVersion = serverVersion;
@@ -108,15 +110,21 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 		this.cacheManager = cacheManager;
 		this.advancedAchievements = advancedAchievements;
 		this.rewardParser = rewardParser;
-		this.achievementsAndDisplayNames = achievementsAndDisplayNames;
+		this.namesToDisplayNames = namesToDisplayNames;
 		this.databaseManager = databaseManager;
 		this.toggleCommand = toggleCommand;
 		this.fireworkListener = fireworkListener;
+		this.soundPlayer = soundPlayer;
 	}
 
 	@Override
 	public void extractConfigurationParameters() {
-		configFireworkStyle = mainConfig.getString("FireworkStyle", "BALL_LARGE");
+		configFireworkStyle = mainConfig.getString("FireworkStyle", "BALL_LARGE").toUpperCase();
+		if (!"RANDOM".equals(configFireworkStyle) && !EnumUtils.isValidEnum(Type.class, configFireworkStyle)) {
+			configFireworkStyle = Type.BALL_LARGE.name();
+			logger.warning("Failed to load FireworkStyle, using ball_large instead. Please use one of the following: "
+					+ "ball_large, ball, burst, creeper, star or random.");
+		}
 		configFirework = mainConfig.getBoolean("Firework", true);
 		configSimplifiedReception = mainConfig.getBoolean("SimplifiedReception", false);
 		configTitleScreen = mainConfig.getBoolean("TitleScreen", true);
@@ -159,8 +167,8 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 			cacheManager.registerNewlyReceivedAchievement(player.getUniqueId(), event.getName());
 
 			if (serverVersion >= 12) {
-				Advancement advancement = Bukkit.getServer()
-						.getAdvancement(new NamespacedKey(advancedAchievements, AdvancementManager.getKey(event.getName())));
+				Advancement advancement = Bukkit.getAdvancement(new NamespacedKey(advancedAchievements,
+						AdvancementManager.getKey(event.getName())));
 				// Matching advancement might not exist if user has not called /aach generate.
 				if (advancement != null) {
 					player.getAdvancementProgress(advancement).awardCriteria(AchievementAdvancement.CRITERIA_NAME);
@@ -174,7 +182,7 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 				event.getMaxOxygenReward());
 		displayAchievement(player, event.getName(), event.getDisplayName(), event.getMessage(), rewardTexts);
 
-		if (cacheManager.getPlayerTotalAchievements(player.getUniqueId()) == achievementsAndDisplayNames.size()) {
+		if (cacheManager.getPlayerTotalAchievements(player.getUniqueId()) == namesToDisplayNames.size()) {
 			handleAllAchievementsReceived(player);
 		}
 	}
@@ -184,7 +192,7 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	 * 
 	 * @param player
 	 * @param commands
-	 * @param commandMessage
+	 * @param commandMessages
 	 * @param item
 	 * @param money
 	 * @param experience
@@ -192,11 +200,11 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	 * @param oxygen
 	 * @return all the reward texts to be displayed to the user
 	 */
-	private List<String> giveRewardsAndPrepareTexts(Player player, String[] commands, List<String> commandMessage,
+	private List<String> giveRewardsAndPrepareTexts(Player player, String[] commands, List<String> commandMessages,
 			ItemStack item, int money, int experience, int health, int oxygen) {
 		List<String> rewardTexts = new ArrayList<>();
 		if (commands != null && commands.length > 0) {
-			rewardTexts.addAll(rewardCommands(commands, commandMessage));
+			rewardTexts.addAll(rewardCommands(commands, commandMessages));
 		}
 		if (item != null) {
 			rewardTexts.add(rewardItem(player, item));
@@ -231,12 +239,12 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 			return new ArrayList<>();
 		}
 
-		if (messages != null) {
-			return messages.stream().map(message -> StringUtils.replace(langCustomMessageCommandReward, "MESSAGE", message))
-					.collect(Collectors.toList());
+		if (messages.isEmpty()) {
+			return Collections.singletonList(langCommandReward);
 		}
-
-		return Collections.singletonList(langCommandReward);
+		return messages.stream()
+				.map(message -> StringUtils.replace(langCustomMessageCommandReward, "MESSAGE", message))
+				.collect(Collectors.toList());
 	}
 
 	/**
@@ -446,59 +454,52 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	 * @param player
 	 */
 	private void displayFirework(Player player) {
-		Location location = player.getLocation();
+		// Set firework to launch beneath player.
+		Location location = player.getLocation().subtract(0, 1, 0);
 		try {
-			// Set firework to launch beneath user.
-			location.setY(location.getY() - 1);
-
 			Firework firework = player.getWorld().spawn(location, Firework.class);
 			FireworkMeta fireworkMeta = firework.getFireworkMeta();
-			Builder effectBuilder = FireworkEffect.builder().flicker(false).trail(false)
-					.withColor(Color.WHITE.mixColors(Color.BLUE.mixColors(Color.NAVY))).withFade(Color.PURPLE);
-			setFireworkType(effectBuilder);
-			fireworkMeta.addEffects(effectBuilder.build());
-			firework.setVelocity(player.getLocation().getDirection().multiply(0));
+			FireworkEffect fireworkEffect = FireworkEffect.builder()
+					.flicker(false)
+					.trail(false)
+					.withColor(Color.WHITE.mixColors(Color.BLUE.mixColors(Color.NAVY)))
+					.withFade(Color.PURPLE)
+					.with(getFireworkType())
+					.build();
+			fireworkMeta.addEffects(fireworkEffect);
 			firework.setFireworkMeta(fireworkMeta);
+			firework.setVelocity(location.getDirection().multiply(0));
 
 			// Firework launched by plugin: damage will later be cancelled out.
 			fireworkListener.addFirework(firework);
 		} catch (Exception e) {
 			// Particle effect workaround to handle various bugs in early Spigot 1.9 and 1.11 releases. We try to
 			// simulate a firework.
-			Sound launchSound = serverVersion < 9 ? Sound.valueOf("ENTITY_FIREWORK_LAUNCH")
-					: Sound.ENTITY_FIREWORK_ROCKET_LAUNCH;
-			player.getWorld().playSound(location, launchSound, 1, 0.6f);
+			soundPlayer.play(player, "ENTITY_FIREWORK_ROCKET_LAUNCH", "ENTITY_FIREWORK_ROCKET_LAUNCH",
+					"ENTITY_FIREWORK_LAUNCH");
 			if (serverVersion >= 13) {
 				player.spawnParticle(Particle.FIREWORKS_SPARK, player.getLocation(), 500, 0, 3, 0, 0.1f);
 			} else {
 				ParticleEffect.FIREWORKS_SPARK.display(0, 3, 0, 0.1f, 500, player.getLocation(), 1);
 			}
-			Sound blastSound = serverVersion < 9 ? Sound.valueOf("ENTITY_FIREWORK_BLAST")
-					: Sound.ENTITY_FIREWORK_ROCKET_BLAST;
-			player.getWorld().playSound(location, blastSound, 1, 0.6f);
-			Sound twinkleSound = serverVersion < 9 ? Sound.valueOf("ENTITY_FIREWORK_TWINKLE")
-					: Sound.ENTITY_FIREWORK_ROCKET_BLAST;
-			player.getWorld().playSound(location, twinkleSound, 1, 0.6f);
+			soundPlayer.play(player, "ENTITY_FIREWORK_ROCKET_BLAST", "ENTITY_FIREWORK_ROCKET_BLAST",
+					"ENTITY_FIREWORK_BLAST");
+			soundPlayer.play(player, "ENTITY_FIREWORK_ROCKET_BLAST", "ENTITY_FIREWORK_ROCKET_BLAST",
+					"ENTITY_FIREWORK_TWINKLE");
 		}
 	}
 
 	/**
-	 * Sets the type of the firwrok, which can either be predefined or random.
+	 * Gets the type of the firework, which can either be predefined or random.
 	 *
-	 * @param effectBuilder
+	 * @return the firework type.
 	 */
-	private void setFireworkType(Builder effectBuilder) {
-		if ("RANDOM".equalsIgnoreCase(configFireworkStyle)) {
+	private Type getFireworkType() {
+		if ("RANDOM".equals(configFireworkStyle)) {
 			Type[] fireworkTypes = Type.values();
-			effectBuilder.with(fireworkTypes[RANDOM.nextInt(fireworkTypes.length)]);
+			return fireworkTypes[RANDOM.nextInt(fireworkTypes.length)];
 		} else {
-			try {
-				effectBuilder.with(Type.valueOf(configFireworkStyle.toUpperCase()));
-			} catch (Exception e) {
-				effectBuilder.with(Type.BALL_LARGE);
-				logger.warning(
-						"Failed to load FireworkStyle. Please use one of the following: BALL_LARGE, BALL, BURST, CREEPER or STAR.");
-			}
+			return Type.valueOf(configFireworkStyle);
 		}
 	}
 
@@ -509,10 +510,7 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	 * @param player
 	 */
 	private void displaySimplifiedReception(Player player) {
-		Location location = player.getLocation();
-		// If old version, retrieving sound by name as it no longer exists in newer versions.
-		Sound sound = serverVersion < 9 ? Sound.valueOf("LEVEL_UP") : Sound.ENTITY_PLAYER_LEVELUP;
-		player.getWorld().playSound(location, sound, 1, 0.9f);
+		soundPlayer.play(player, "ENTITY_PLAYER_LEVELUP", "ENTITY_PLAYER_LEVELUP", "LEVEL_UP");
 		if (serverVersion >= 13) {
 			player.spawnParticle(Particle.FIREWORKS_SPARK, player.getLocation(), 500, 0, 3, 0, 0.1f);
 		} else {
@@ -528,7 +526,7 @@ public class PlayerAdvancedAchievementListener implements Listener, Reloadable {
 	private void handleAllAchievementsReceived(Player player) {
 		List<String> rewardTexts = giveRewardsAndPrepareTexts(player,
 				rewardParser.getCommandRewards("AllAchievementsReceivedRewards", player),
-				rewardParser.getCustomCommandMessage("AllAchievementsReceivedRewards"),
+				rewardParser.getCustomCommandMessages("AllAchievementsReceivedRewards"),
 				rewardParser.getItemReward("AllAchievementsReceivedRewards"),
 				rewardParser.getRewardAmount("AllAchievementsReceivedRewards", "Money"),
 				rewardParser.getRewardAmount("AllAchievementsReceivedRewards", "Experience"),

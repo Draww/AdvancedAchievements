@@ -20,6 +20,7 @@ import org.bukkit.entity.Pig;
 import org.bukkit.entity.Player;
 import org.bukkit.util.NumberConversions;
 
+import com.hm.achievement.category.Category;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.db.CacheManager;
 import com.hm.achievement.lifecycle.Cleanable;
@@ -37,14 +38,14 @@ import com.hm.mcshared.file.CommentedYamlConfiguration;
 public class AchieveDistanceRunnable extends StatisticIncreaseHandler implements Cleanable, Runnable {
 
 	private final Map<UUID, Location> playerLocations = new HashMap<>();
-	private final Set<String> disabledCategories;
+	private final Set<Category> disabledCategories;
 
 	private boolean configIgnoreVerticalDistance;
 
 	@Inject
 	public AchieveDistanceRunnable(@Named("main") CommentedYamlConfiguration mainConfig, int serverVersion,
 			Map<String, List<Long>> sortedThresholds, CacheManager cacheManager, RewardParser rewardParser,
-			Set<String> disabledCategories) {
+			Set<Category> disabledCategories) {
 		super(mainConfig, serverVersion, sortedThresholds, cacheManager, rewardParser);
 		this.disabledCategories = disabledCategories;
 	}
@@ -63,7 +64,7 @@ public class AchieveDistanceRunnable extends StatisticIncreaseHandler implements
 
 	@Override
 	public void run() {
-		Bukkit.getServer().getOnlinePlayers().stream().forEach(this::validateMovementAndUpdateDistance);
+		Bukkit.getOnlinePlayers().stream().forEach(this::validateMovementAndUpdateDistance);
 	}
 
 	public void updateLocation(UUID uuid, Location location) {
@@ -76,14 +77,12 @@ public class AchieveDistanceRunnable extends StatisticIncreaseHandler implements
 	 * @param player
 	 */
 	private void validateMovementAndUpdateDistance(Player player) {
-		Location previousLocation = playerLocations.get(player.getUniqueId());
-
 		// Update new location.
-		playerLocations.put(player.getUniqueId(), player.getLocation());
+		Location previousLocation = playerLocations.put(player.getUniqueId(), player.getLocation());
 
 		// If player location not found or if player has changed world, ignore previous location.
 		// Evaluating distance would give an exception.
-		if (previousLocation == null || !previousLocation.getWorld().getName().equals(player.getWorld().getName())) {
+		if (previousLocation == null || !previousLocation.getWorld().getUID().equals(player.getWorld().getUID())) {
 			return;
 		}
 
@@ -108,30 +107,29 @@ public class AchieveDistanceRunnable extends StatisticIncreaseHandler implements
 			updateDistance(difference, player, NormalAchievements.DISTANCEBOAT);
 		} else if (serverVersion >= 11 && player.getVehicle() instanceof Llama) {
 			updateDistance(difference, player, NormalAchievements.DISTANCELLAMA);
-		} else if (!player.isFlying() && (serverVersion < 9 || !player.isGliding())) {
-			updateDistance(difference, player, NormalAchievements.DISTANCEFOOT);
 		} else if (serverVersion >= 9 && player.isGliding()) {
 			updateDistance(difference, player, NormalAchievements.DISTANCEGLIDING);
+		} else if (!player.isFlying()) {
+			updateDistance(difference, player, NormalAchievements.DISTANCEFOOT);
 		}
 	}
 
 	/**
-	 * Calculates the difference between the player's last location and his current one.
+	 * Calculates the difference between the player's last location and his current one. May ignore the vertical axis or
+	 * not depending on configuration..
 	 * 
 	 * @param player
 	 * @param previousLocation
 	 * @return difference
 	 */
 	private int getDistanceDifference(Player player, Location previousLocation) {
-		// Distance difference since last runnable; ignore the vertical axis or not.
-		double difference;
 		if (configIgnoreVerticalDistance) {
-			difference = Math.sqrt(NumberConversions.square(previousLocation.getX() - player.getLocation().getX())
-					+ NumberConversions.square(previousLocation.getZ() - player.getLocation().getZ()));
+			double xSquared = NumberConversions.square(previousLocation.getX() - player.getLocation().getX());
+			double zSquared = NumberConversions.square(previousLocation.getZ() - player.getLocation().getZ());
+			return (int) Math.sqrt(xSquared + zSquared);
 		} else {
-			difference = previousLocation.distance(player.getLocation());
+			return (int) previousLocation.distance(player.getLocation());
 		}
-		return (int) difference;
 	}
 
 	/**
@@ -142,7 +140,7 @@ public class AchieveDistanceRunnable extends StatisticIncreaseHandler implements
 	 * @param category
 	 */
 	private void updateDistance(int difference, Player player, NormalAchievements category) {
-		if (!player.hasPermission(category.toPermName()) || disabledCategories.contains(category.toString())) {
+		if (!player.hasPermission(category.toPermName()) || disabledCategories.contains(category)) {
 			return;
 		}
 

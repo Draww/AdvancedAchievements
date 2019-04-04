@@ -10,6 +10,7 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 
 import com.hm.achievement.AdvancedAchievements;
+import com.hm.achievement.category.Category;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 
 import dagger.Module;
@@ -26,13 +27,27 @@ public class ConfigModule {
 
 	@Provides
 	@Singleton
-	Map<String, String> provideAchievementsAndDisplayNames() {
+	@Named("ntd")
+	Map<String, String> provideNamesToDisplayNames() {
 		return new HashMap<>();
 	}
 
 	@Provides
 	@Singleton
-	Set<String> provideDisabledCategories() {
+	@Named("dtn")
+	Map<String, String> provideDisplayNamesToNames() {
+		return new HashMap<>();
+	}
+
+	@Provides
+	@Singleton
+	Set<Category> provideDisabledCategories() {
+		return new HashSet<>();
+	}
+
+	@Provides
+	@Singleton
+	Set<String> provideEnabledCategoriesWithSubcategories() {
 		return new HashSet<>();
 	}
 
@@ -52,9 +67,9 @@ public class ConfigModule {
 	@Provides
 	@Singleton
 	@Named("lang")
-	CommentedYamlConfiguration providesLangConfig(@Named("main") CommentedYamlConfiguration mainConfig,
-			AdvancedAchievements advancedAchievements) {
-		return new CommentedYamlConfiguration(mainConfig.getString("LanguageFileName", "lang.yml"), advancedAchievements);
+	CommentedYamlConfiguration providesLangConfig(AdvancedAchievements advancedAchievements) {
+		String languageFileName = advancedAchievements.getConfig().getString("LanguageFileName", "lang.yml");
+		return new CommentedYamlConfiguration(languageFileName, advancedAchievements);
 	}
 
 	@Provides

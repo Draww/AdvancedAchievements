@@ -9,11 +9,13 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import com.hm.achievement.category.CommandAchievements;
 import com.hm.achievement.db.CacheManager;
 import com.hm.achievement.lang.LangHelper;
 import com.hm.achievement.lang.command.CmdLang;
 import com.hm.achievement.utils.PlayerAdvancedAchievementEvent.PlayerAdvancedAchievementEventBuilder;
 import com.hm.achievement.utils.RewardParser;
+import com.hm.achievement.utils.StringHelper;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 
 /**
@@ -55,7 +57,7 @@ public class GiveCommand extends AbstractParsableCommand {
 
 	@Override
 	void onExecuteForPlayer(CommandSender sender, String[] args, Player player) {
-		String achievementPath = "Commands." + args[1];
+		String achievementPath = CommandAchievements.COMMANDS + "." + args[1];
 
 		if (mainConfig.getString(achievementPath + ".Message", null) != null) {
 			// Check whether player has already received achievement and cannot receive it again.
@@ -71,18 +73,20 @@ public class GiveCommand extends AbstractParsableCommand {
 					.player(player).name(achievementName).displayName(mainConfig.getString(achievementPath + ".DisplayName"))
 					.message(mainConfig.getString(achievementPath + ".Message"))
 					.commandRewards(rewardParser.getCommandRewards(rewardPath, player))
-					.commandMessage(rewardParser.getCustomCommandMessage(rewardPath))
+					.commandMessage(rewardParser.getCustomCommandMessages(rewardPath))
 					.itemReward(rewardParser.getItemReward(rewardPath))
 					.moneyReward(rewardParser.getRewardAmount(rewardPath, "Money"))
 					.experienceReward(rewardParser.getRewardAmount(rewardPath, "Experience"))
 					.maxHealthReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxHealth"))
 					.maxOxygenReward(rewardParser.getRewardAmount(rewardPath, "IncreaseMaxOxygen"));
 
-			Bukkit.getServer().getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
+			Bukkit.getPluginManager().callEvent(playerAdvancedAchievementEventBuilder.build());
 
 			sender.sendMessage(langAchievementGiven);
 		} else {
-			sender.sendMessage(StringUtils.replaceOnce(langAchievementNotFound, "PLAYER", args[2]));
+			sender.sendMessage(StringUtils.replaceOnce(langAchievementNotFound, "CLOSEST_MATCH",
+					StringHelper.getClosestMatch(args[1],
+							mainConfig.getShallowKeys(CommandAchievements.COMMANDS.toString()))));
 		}
 	}
 }

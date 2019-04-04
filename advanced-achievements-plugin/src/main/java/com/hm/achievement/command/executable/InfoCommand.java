@@ -54,7 +54,7 @@ public class InfoCommand extends AbstractCommand {
 	public void extractConfigurationParameters() {
 		super.extractConfigurationParameters();
 
-		ChatColor configColor = ChatColor.getByChar(mainConfig.getString("Color", "5").charAt(0));
+		ChatColor configColor = ChatColor.getByChar(mainConfig.getString("Color", "5"));
 		String configIcon = StringEscapeUtils.unescapeJava(mainConfig.getString("Icon", "\u2618"));
 		configDatabaseType = mainConfig.getString("DatabaseType", "sqlite");
 
@@ -114,6 +114,8 @@ public class InfoCommand extends AbstractCommand {
 			return "MySQL";
 		} else if ("postgresql".equalsIgnoreCase(configDatabaseType)) {
 			return "PostgreSQL";
+		} else if ("h2".equalsIgnoreCase(configDatabaseType)) {
+			return "H2";
 		} else {
 			return "SQLite";
 		}

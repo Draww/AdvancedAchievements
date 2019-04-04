@@ -1,11 +1,6 @@
 package com.hm.achievement.db;
 
 import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
 import java.util.Map;
 import java.util.logging.Logger;
 
@@ -19,26 +14,17 @@ import com.hm.mcshared.file.CommentedYamlConfiguration;
  * @author Pyves
  *
  */
-public class MySQLDatabaseManager extends AbstractDatabaseManager {
+public class MySQLDatabaseManager extends AbstractRemoteDatabaseManager {
 
 	public MySQLDatabaseManager(@Named("main") CommentedYamlConfiguration mainConfig, Logger logger,
-			Map<String, String> achievementsAndDisplayNames, DatabaseUpdater databaseUpdater) {
-		super(mainConfig, logger, achievementsAndDisplayNames, databaseUpdater);
+			@Named("ntd") Map<String, String> namesToDisplayNames, DatabaseUpdater databaseUpdater) {
+		super(mainConfig, logger, namesToDisplayNames, databaseUpdater, "com.mysql.jdbc.Driver", "mysql");
 	}
 
 	@Override
 	void performPreliminaryTasks() throws ClassNotFoundException, UnsupportedEncodingException {
-		Class.forName("com.mysql.jdbc.Driver");
+		super.performPreliminaryTasks();
 
-		// Get parameters from the MySQL config category.
-		databaseAddress = mainConfig.getString("MYSQL.Database", "jdbc:mysql://localhost:3306/minecraft");
-		databaseUser = URLEncoder.encode(mainConfig.getString("MYSQL.User", "root"), StandardCharsets.UTF_8.name());
-		databasePassword = URLEncoder.encode(mainConfig.getString("MYSQL.Password", "root"), StandardCharsets.UTF_8.name());
-	}
-
-	@Override
-	Connection createSQLConnection() throws SQLException {
-		return DriverManager.getConnection(databaseAddress + "?useSSL=false&autoReconnect=true" + additionalConnectionOptions
-				+ "&user=" + databaseUser + "&password=" + databasePassword);
+		additionalConnectionOptions = "&useSSL=false" + additionalConnectionOptions;
 	}
 }

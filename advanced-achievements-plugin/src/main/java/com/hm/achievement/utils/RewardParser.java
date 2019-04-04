@@ -5,12 +5,14 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.text.WordUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -24,8 +26,6 @@ import com.hm.achievement.lifecycle.Reloadable;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 
 import net.milkbowl.vault.economy.Economy;
-import net.milkbowl.vault.item.ItemInfo;
-import net.milkbowl.vault.item.Items;
 
 /**
  * Class in charge of handling the rewards for achievements.
@@ -34,6 +34,8 @@ import net.milkbowl.vault.item.Items;
  */
 @Singleton
 public class RewardParser implements Reloadable {
+
+	private static final Pattern MULTIPLE_REWARD_COMMANDS_SPLITTER = Pattern.compile(";\\s*");
 
 	private final CommentedYamlConfiguration mainConfig;
 	private final CommentedYamlConfiguration langConfig;
@@ -55,8 +57,8 @@ public class RewardParser implements Reloadable {
 		this.langConfig = langConfig;
 		this.materialHelper = materialHelper;
 		// Try to retrieve an Economy instance from Vault.
-		if (Bukkit.getServer().getPluginManager().getPlugin("Vault") != null) {
-			RegisteredServiceProvider<Economy> rsp = Bukkit.getServer().getServicesManager().getRegistration(Economy.class);
+		if (Bukkit.getPluginManager().getPlugin("Vault") != null) {
+			RegisteredServiceProvider<Economy> rsp = Bukkit.getServicesManager().getRegistration(Economy.class);
 			if (rsp != null) {
 				economy = rsp.getProvider();
 			}
@@ -118,11 +120,11 @@ public class RewardParser implements Reloadable {
 		}
 
 		if (keyNames.contains(path + ".Command")) {
-			if (mainConfig.isConfigurationSection(path + ".Command") && keyNames.contains(path + ".Command.Display")) {
-				List<String> messages = getCustomCommandMessage(path);
-				rewardTypes.addAll(messages);
-			} else {
+			List<String> messages = getCustomCommandMessages(path);
+			if (messages.isEmpty()) {
 				rewardTypes.add(langListRewardCommand);
+			} else {
+				rewardTypes.addAll(messages);
 			}
 		}
 		return rewardTypes;
@@ -145,15 +147,7 @@ public class RewardParser implements Reloadable {
 	 * @return the item name
 	 */
 	public String getItemName(ItemStack item) {
-		// Return Vault name of object if available.
-		if (economy != null) {
-			ItemInfo itemInfo = Items.itemByStack(item);
-			if (itemInfo != null) {
-				return itemInfo.getName();
-			}
-		}
-		// Vault name of object not available.
-		return StringUtils.replace(item.getType().toString(), "_", " ").toLowerCase();
+		return WordUtils.capitalizeFully(item.getType().toString().replace('_', ' '));
 	}
 
 	/**
@@ -194,9 +188,7 @@ public class RewardParser implements Reloadable {
 			// The amount has already been parsed out and is provided by parameter amount.
 			String itemPath = path + ".Item";
 			String materialNameAndQty = mainConfig.getString(itemPath, "");
-			int spaceIndex = materialNameAndQty.indexOf(' ');
-
-			String materialName = spaceIndex > 0 ? materialNameAndQty.substring(0, spaceIndex) : materialNameAndQty;
+			String materialName = StringUtils.substringBefore(materialNameAndQty, " ");
 
 			Optional<Material> rewardMaterial = materialHelper.matchMaterial(materialName, "config.yml (" + typePath + ")");
 			if (rewardMaterial.isPresent()) {
@@ -237,7 +229,7 @@ public class RewardParser implements Reloadable {
 						Integer.toString(player.getLocation().getBlockY()),
 						Integer.toString(player.getLocation().getBlockZ()), player.getName() });
 		// Multiple reward commands can be set, separated by a semicolon and space. Extra parsing needed.
-		return commandReward.split(";[ ]*");
+		return MULTIPLE_REWARD_COMMANDS_SPLITTER.split(commandReward);
 	}
 
 	/**
@@ -247,9 +239,9 @@ public class RewardParser implements Reloadable {
 	 * @return the custom command message (null if not present)
 	 * @author tassu
 	 */
-	public List<String> getCustomCommandMessage(String path) {
-		if (!mainConfig.isConfigurationSection(path + ".Command")) {
-			return null;
+	public List<String> getCustomCommandMessages(String path) {
+		if (!mainConfig.contains(path + ".Command.Display")) {
+			return Collections.emptyList();
 		}
 
 		if (mainConfig.isList(path + ".Command.Display")) {
@@ -272,17 +264,9 @@ public class RewardParser implements Reloadable {
 			itemAmount = mainConfig.getInt(path + ".Item.Amount", 0);
 		} else if (mainConfig.getKeys(true).contains(path + ".Item")) {
 			// New config syntax. Name of item and quantity are on the same line, separated by a space.
-			String materialAndQty = mainConfig.getString(path + ".Item", "");
-			int indexOfAmount = materialAndQty.indexOf(' ');
-			if (indexOfAmount != -1) {
-				String intString = materialAndQty.substring(indexOfAmount + 1).trim();
-				int indexOfName = intString.indexOf(' ');
-				if (indexOfName != -1) {
-					itemAmount = Integer.parseInt(intString.split(" ")[0]);
-				} else {
-					itemAmount = Integer.parseInt(intString);
-				}
-			}
+			String materialAndQty = StringUtils.normalizeSpace(mainConfig.getString(path + ".Item", ""));
+			String intString = StringUtils.substringBefore(StringUtils.substringAfter(materialAndQty, " "), " ");
+			itemAmount = Integer.parseInt(intString);
 		}
 		return itemAmount;
 	}
@@ -295,7 +279,7 @@ public class RewardParser implements Reloadable {
 	 */
 	private String getItemName(String path) {
 		String configString = mainConfig.getString(path + ".Item", "");
-		String[] splittedString = configString.split(" ");
+		String[] splittedString = StringUtils.split(configString);
 		return StringUtils.join(splittedString, " ", 2, splittedString.length).trim();
 	}
 }

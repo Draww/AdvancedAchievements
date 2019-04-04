@@ -17,6 +17,7 @@ import org.bukkit.map.MinecraftFont;
 import com.hm.achievement.db.CacheManager;
 import com.hm.achievement.lang.LangHelper;
 import com.hm.achievement.lang.command.CmdLang;
+import com.hm.achievement.utils.SoundPlayer;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 import com.hm.mcshared.particle.ParticleEffect;
 
@@ -36,24 +37,28 @@ public class StatsCommand extends AbstractCommand {
 	private final Logger logger;
 	private final int serverVersion;
 	private final CacheManager cacheManager;
-	private final Map<String, String> achievementsAndDisplayNames;
+	private final Map<String, String> namesToDisplayNames;
+	private final SoundPlayer soundPlayer;
 
 	private ChatColor configColor;
 	private String configIcon;
 	private boolean configAdditionalEffects;
 	private boolean configSound;
+	private String configSoundStats;
 
 	private String langNumberAchievements;
 
 	@Inject
 	public StatsCommand(@Named("main") CommentedYamlConfiguration mainConfig,
 			@Named("lang") CommentedYamlConfiguration langConfig, StringBuilder pluginHeader, Logger logger,
-			int serverVersion, CacheManager cacheManager, Map<String, String> achievementsAndDisplayNames) {
+			int serverVersion, CacheManager cacheManager, @Named("ntd") Map<String, String> namesToDisplayNames,
+			SoundPlayer soundPlayer) {
 		super(mainConfig, langConfig, pluginHeader);
 		this.serverVersion = serverVersion;
 		this.logger = logger;
 		this.cacheManager = cacheManager;
-		this.achievementsAndDisplayNames = achievementsAndDisplayNames;
+		this.namesToDisplayNames = namesToDisplayNames;
+		this.soundPlayer = soundPlayer;
 	}
 
 	@Override
@@ -61,10 +66,11 @@ public class StatsCommand extends AbstractCommand {
 		super.extractConfigurationParameters();
 
 		// Load configuration parameters.
-		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5").charAt(0));
+		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5"));
 		configIcon = StringEscapeUtils.unescapeJava(mainConfig.getString("Icon", "\u2618"));
 		configAdditionalEffects = mainConfig.getBoolean("AdditionalEffects", true);
 		configSound = mainConfig.getBoolean("Sound", true);
+		configSoundStats = mainConfig.getString("SoundStats", "ENTITY_FIREWORK_ROCKET_BLAST").toUpperCase();
 
 		langNumberAchievements = pluginHeader + LangHelper.get(CmdLang.NUMBER_ACHIEVEMENTS, langConfig) + " " + configColor;
 	}
@@ -78,7 +84,7 @@ public class StatsCommand extends AbstractCommand {
 		Player player = (Player) sender;
 
 		int playerAchievements = cacheManager.getPlayerTotalAchievements(player.getUniqueId());
-		int totalAchievements = achievementsAndDisplayNames.size();
+		int totalAchievements = namesToDisplayNames.size();
 
 		player.sendMessage(
 				langNumberAchievements + String.format("%.1f", 100 * (double) playerAchievements / totalAchievements) + "%");
@@ -124,9 +130,9 @@ public class StatsCommand extends AbstractCommand {
 				}
 			}
 
-			// Play special sound.
 			if (configSound) {
-				playSpecialSound(player, serverVersion);
+				soundPlayer.play(player, configSoundStats, "ENTITY_FIREWORK_ROCKET_BLAST", "ENTITY_FIREWORK_LARGE_BLAST",
+						"FIREWORK_BLAST");
 			}
 		}
 	}

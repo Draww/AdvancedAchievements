@@ -6,9 +6,11 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,25 +46,23 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 	final AtomicReference<Connection> sqlConnection = new AtomicReference<>();
 	final CommentedYamlConfiguration mainConfig;
 	final Logger logger;
+	final String driverPath;
 
-	volatile String databaseAddress;
-	volatile String databaseUser;
-	volatile String databasePassword;
-	volatile String additionalConnectionOptions;
 	volatile String prefix;
 
-	private final Map<String, String> achievementsAndDisplayNames;
+	private final Map<String, String> namesToDisplayNames;
 	private final DatabaseUpdater databaseUpdater;
 
 	private DateFormat dateFormat;
 	private boolean configBookChronologicalOrder;
 
 	public AbstractDatabaseManager(CommentedYamlConfiguration mainConfig, Logger logger,
-			Map<String, String> achievementsAndDisplayNames, DatabaseUpdater databaseUpdater) {
+			Map<String, String> namesToDisplayNames, DatabaseUpdater databaseUpdater, String driverPath) {
 		this.mainConfig = mainConfig;
 		this.logger = logger;
-		this.achievementsAndDisplayNames = achievementsAndDisplayNames;
+		this.namesToDisplayNames = namesToDisplayNames;
 		this.databaseUpdater = databaseUpdater;
+		this.driverPath = driverPath;
 		// We expect to execute many short writes to the database. The pool can grow dynamically under high load and
 		// allows to reuse threads.
 		pool = Executors.newCachedThreadPool();
@@ -90,7 +90,6 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 		logger.info("Initialising database...");
 
 		prefix = mainConfig.getString("TablePrefix", "");
-		additionalConnectionOptions = mainConfig.getString("AdditionalConnectionOptions", "");
 
 		try {
 			performPreliminaryTasks();
@@ -107,11 +106,12 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 			throw new PluginLoadError("Failed to establish database connection. Please verify your settings in config.yml.");
 		}
 
-		databaseUpdater.renameExistingTables(this, databaseAddress);
+		databaseUpdater.renameExistingTables(this);
 		databaseUpdater.initialiseTables(this);
 		databaseUpdater.updateOldDBToMaterial(this);
 		databaseUpdater.updateOldDBToDates(this);
-		databaseUpdater.updateOldDBMobnameSize(this);
+		databaseUpdater.updateOldDBToTimestamps(this);
+		Arrays.stream(MultipleAchievements.values()).forEach(m -> databaseUpdater.updateOldDBColumnSize(this, m));
 	}
 
 	/**
@@ -149,7 +149,7 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 	}
 
 	/**
-	 * Retrieves SQL connection to MySQL, PostgreSQL or SQLite database.
+	 * Retrieves SQL connection to MySQL, PostgreSQL, H2 or SQLite database.
 	 *
 	 * @return the cached SQL connection or a new one
 	 */
@@ -225,7 +225,7 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 				}
 				ResultSet rs = ps.executeQuery();
 				if (rs.next()) {
-					return dateFormat.format(rs.getDate(1));
+					return dateFormat.format(new Date(rs.getTimestamp(1).getTime()));
 				}
 			}
 			return null;
@@ -294,7 +294,7 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 			Connection conn = getSQLConnection();
 			try (PreparedStatement ps = conn.prepareStatement(sql)) {
 				if (start > 0L) {
-					ps.setDate(1, new Date(start));
+					ps.setTimestamp(1, new Timestamp(start));
 				}
 				ps.setFetchSize(1000);
 				ResultSet rs = ps.executeQuery();
@@ -333,7 +333,7 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 				ps.setObject(1, uuid, Types.CHAR);
 				ps.setString(2, achName);
 				ps.setString(3, achMessage == null ? "" : achMessage);
-				ps.setDate(4, new Date(epochMs));
+				ps.setTimestamp(4, new Timestamp(epochMs));
 				ps.execute();
 			}
 		}).executeOperation(pool, logger, "registering an achievement");
@@ -556,12 +556,12 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 						// Remove eventual double quotes due to a bug in versions 3.0 to 3.0.2 where names containing
 						// single quotes were inserted with two single quotes in the database.
 						String achName = StringUtils.replace(rs.getString(2), "''", "'");
-						String displayName = achievementsAndDisplayNames.get(achName);
+						String displayName = namesToDisplayNames.get(achName);
 						if (StringUtils.isNotBlank(displayName)) {
 							achName = displayName;
 						}
 						String achMsg = rs.getString(3);
-						Date dateAwarded = rs.getDate(4);
+						Timestamp dateAwarded = rs.getTimestamp(4);
 
 						achievements.add(new AwardedDBAchievement(uuid, achName, achMsg, dateAwarded.getTime(),
 								dateFormat.format(dateAwarded)));
@@ -570,5 +570,42 @@ public abstract class AbstractDatabaseManager implements Reloadable {
 			}
 			return achievements;
 		}).executeOperation("retrieving the full data of received achievements");
+	}
+
+	/**
+	 * Retrieve matching list of achievements for a name of an achievement.
+	 * <p>
+	 * Limited to 1000 most recent entries to save memory.
+	 *
+	 * @param achievementName Name of an achievement in database format.
+	 * @return List of AwardedDBAchievement objects, message field is empty to save memory.
+	 */
+	public List<AwardedDBAchievement> getAchievementsRecipientList(String achievementName) {
+		String sql = "SELECT playername, date FROM " + prefix + "achievements WHERE achievement = ?" +
+				" ORDER BY date DESC LIMIT 1000";
+		return ((SQLReadOperation<List<AwardedDBAchievement>>) () -> {
+			List<AwardedDBAchievement> achievements = new ArrayList<>();
+			Connection conn = getSQLConnection();
+			try (PreparedStatement ps = conn.prepareStatement(sql)) {
+				ps.setFetchSize(1000);
+				ps.setString(1, achievementName);
+				try (ResultSet rs = ps.executeQuery()) {
+					while (rs.next()) {
+						UUID uuid;
+						try {
+							String uuidString = rs.getString("playername");
+							uuid = UUID.fromString(uuidString);
+						} catch (IllegalArgumentException improperUUIDFormatException) {
+							continue;
+						}
+						Date dateAwarded = new Date(rs.getTimestamp("date").getTime());
+
+						achievements.add(new AwardedDBAchievement(uuid, namesToDisplayNames.get(achievementName), "",
+								dateAwarded.getTime(), dateFormat.format(dateAwarded)));
+					}
+				}
+			}
+			return achievements;
+		}).executeOperation("retrieving the recipients of an achievement");
 	}
 }

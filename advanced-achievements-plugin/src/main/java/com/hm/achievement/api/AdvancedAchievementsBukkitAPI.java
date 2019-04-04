@@ -12,9 +12,11 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
+import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.bukkit.Bukkit;
 
 import com.hm.achievement.AdvancedAchievements;
@@ -35,17 +37,17 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 	private final AdvancedAchievements advancedAchievements;
 	private final CacheManager cacheManager;
 	private final AbstractDatabaseManager databaseManager;
-	private final Map<String, String> achievementsAndDisplayNames;
+	private final Map<String, String> namesToDisplayNames;
 	private final Logger logger;
 
 	@Inject
 	AdvancedAchievementsBukkitAPI(AdvancedAchievements advancedAchievements, Logger logger, CacheManager cacheManager,
-			AbstractDatabaseManager databaseManager, Map<String, String> achievementsAndDisplayNames) {
+			AbstractDatabaseManager databaseManager, @Named("ntd") Map<String, String> namesToDisplayNames) {
 		this.advancedAchievements = advancedAchievements;
 		this.logger = logger;
 		this.cacheManager = cacheManager;
 		this.databaseManager = databaseManager;
-		this.achievementsAndDisplayNames = achievementsAndDisplayNames;
+		this.namesToDisplayNames = namesToDisplayNames;
 	}
 
 	/**
@@ -75,12 +77,21 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 	}
 
 	@Override
+	public Version getAdvancedAchievementsVersion() {
+		String[] versionParts = StringUtils.split(advancedAchievements.getDescription().getVersion(), '.');
+		int major = versionParts.length > 0 ? NumberUtils.toInt(versionParts[0]) : 0;
+		int minor = versionParts.length > 1 ? NumberUtils.toInt(versionParts[1]) : 0;
+		int patch = versionParts.length > 2 ? NumberUtils.toInt(versionParts[2]) : 0;
+		return new AdvancedAchievementsAPI.Version(major, minor, patch);
+	}
+
+	@Override
 	public boolean hasPlayerReceivedAchievement(UUID player, String achievementName) {
 		validateNotNull(player, "Player");
 		validateNotEmpty(achievementName, "Achievement Name");
 		// Underlying structures do not support concurrent operations and are only used by the main server thread. Not
 		// thread-safe to modify or read them asynchronously. Do not use cached data if player is offline.
-		if (Bukkit.getServer().isPrimaryThread() && isPlayerOnline(player)) {
+		if (Bukkit.isPrimaryThread() && isPlayerOnline(player)) {
 			return cacheManager.hasPlayerAchievement(player, achievementName);
 		} else {
 			return databaseManager.hasPlayerAchievement(player, achievementName);
@@ -132,7 +143,7 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 		validateNotNull(category, "Category");
 		// Underlying structures do not support concurrent write operations and are only modified by the main server
 		// thread. Do not use cache if player is offline.
-		if (Bukkit.getServer().isPrimaryThread() && isPlayerOnline(player)) {
+		if (Bukkit.isPrimaryThread() && isPlayerOnline(player)) {
 			return cacheManager.getAndIncrementStatisticAmount(category, player, 0);
 		} else {
 			return databaseManager.getNormalAchievementAmount(player, category);
@@ -146,7 +157,7 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 		validateNotEmpty(subcategory, "Sub-category");
 		// Underlying structures do not support concurrent write operations and are only modified by the main server
 		// thread. Do not use cache if player is offline.
-		if (Bukkit.getServer().isPrimaryThread() && isPlayerOnline(player)) {
+		if (Bukkit.isPrimaryThread() && isPlayerOnline(player)) {
 			return cacheManager.getAndIncrementStatisticAmount(category, subcategory, player, 0);
 		} else {
 			return databaseManager.getMultipleAchievementAmount(player, category, subcategory);
@@ -156,7 +167,7 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 	@Override
 	public String getDisplayNameForName(String achievementName) {
 		validateNotEmpty(achievementName, "Achievement Name");
-		return achievementsAndDisplayNames.get(achievementName);
+		return namesToDisplayNames.get(achievementName);
 	}
 
 	@Override
@@ -171,7 +182,7 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 	 * @return true if player is online, false otherwise
 	 */
 	private boolean isPlayerOnline(UUID player) {
-		if (Bukkit.getServer().isPrimaryThread()) {
+		if (Bukkit.isPrimaryThread()) {
 			return Bukkit.getPlayer(player) != null;
 		}
 		// Called asynchronously. To ensure thread safety we must issue a call on the server's main thread of execution.
@@ -215,4 +226,5 @@ public class AdvancedAchievementsBukkitAPI implements AdvancedAchievementsAPI {
 			throw new IllegalArgumentException(argumentName + " cannot be empty.");
 		}
 	}
+
 }

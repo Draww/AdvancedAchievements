@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
@@ -24,6 +23,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.map.MinecraftFont;
 
+import com.hm.achievement.category.CommandAchievements;
 import com.hm.achievement.category.MultipleAchievements;
 import com.hm.achievement.category.NormalAchievements;
 import com.hm.achievement.db.AbstractDatabaseManager;
@@ -32,6 +32,7 @@ import com.hm.achievement.lang.GuiLang;
 import com.hm.achievement.lang.LangHelper;
 import com.hm.achievement.utils.MaterialHelper;
 import com.hm.achievement.utils.RewardParser;
+import com.hm.achievement.utils.StringHelper;
 import com.hm.mcshared.file.CommentedYamlConfiguration;
 
 /**
@@ -45,8 +46,6 @@ public class CategoryGUI extends AbstractGUI {
 	private static final int MAX_PER_PAGE = 50;
 	private static final long NO_STAT = -1L;
 	private static final String NO_SUBCATEGORY = "";
-	// Pattern to delete colors if achievement not yet received.
-	private static final Pattern REGEX_PATTERN = Pattern.compile("&([a-f]|[0-9]){1}");
 	// Minecraft font, used to get size information in the progress bar.
 	private static final MinecraftFont FONT = MinecraftFont.Font;
 
@@ -98,8 +97,8 @@ public class CategoryGUI extends AbstractGUI {
 		configHideRewardDisplayInList = mainConfig.getBoolean("HideRewardDisplayInList", false);
 		configEnrichedProgressBars = mainConfig.getBoolean("EnrichedListProgressBars", true);
 		configNumberedItemsInList = mainConfig.getBoolean("NumberedItemsInList", false);
-		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5").charAt(0));
-		configListColorNotReceived = ChatColor.getByChar(mainConfig.getString("ListColorNotReceived", "8").charAt(0));
+		configColor = ChatColor.getByChar(mainConfig.getString("Color", "5"));
+		configListColorNotReceived = ChatColor.getByChar(mainConfig.getString("ListColorNotReceived", "8"));
 
 		langListGUITitle = translateColorCodes(LangHelper.get(GuiLang.GUI_TITLE, langConfig));
 		langListAchievementReceived = StringEscapeUtils
@@ -115,15 +114,19 @@ public class CategoryGUI extends AbstractGUI {
 		achievementNotStarted = createItemStack("AchievementNotStarted");
 		achievementStarted = createItemStack("AchievementStarted");
 		achievementReceived = createItemStack("AchievementReceived");
-		previousButton = createButton("PreviousButton", LangHelper.get(GuiLang.PREVIOUS_MESSAGE, langConfig));
-		nextButton = createButton("NextButton", LangHelper.get(GuiLang.NEXT_MESSAGE, langConfig));
-		backButton = createButton("BackButton", LangHelper.get(GuiLang.BACK_MESSAGE, langConfig));
+		previousButton = createButton("PreviousButton", GuiLang.PREVIOUS_MESSAGE, GuiLang.PREVIOUS_LORE);
+		nextButton = createButton("NextButton", GuiLang.NEXT_MESSAGE, GuiLang.NEXT_LORE);
+		backButton = createButton("BackButton", GuiLang.BACK_MESSAGE, GuiLang.BACK_LORE);
 	}
 
-	private ItemStack createButton(String category, String msg) {
+	private ItemStack createButton(String category, GuiLang msg, GuiLang lore) {
 		ItemStack button = createItemStack(category);
 		ItemMeta meta = button.getItemMeta();
-		meta.setDisplayName(translateColorCodes(StringEscapeUtils.unescapeJava(msg)));
+		meta.setDisplayName(translateColorCodes(StringEscapeUtils.unescapeJava(LangHelper.get(msg, langConfig))));
+		String loreString = translateColorCodes(StringEscapeUtils.unescapeJava(LangHelper.get(lore, langConfig)));
+		if (!loreString.isEmpty()) {
+			meta.setLore(Collections.singletonList(loreString));
+		}
 		button.setItemMeta(meta);
 		return button;
 	}
@@ -137,7 +140,7 @@ public class CategoryGUI extends AbstractGUI {
 	 */
 	public void displayCategoryGUI(ItemStack item, Player player, int requestedPage) {
 		for (Entry<MultipleAchievements, ItemStack> entry : multipleAchievementItems.entrySet()) {
-			if (entry.getValue().getType() == item.getType() && entry.getValue().getDurability() == item.getDurability()) {
+			if (entry.getValue().isSimilar(item)) {
 				String categoryName = entry.getKey().toString();
 				List<String> achievementPaths = getSortedMultipleAchievementPaths(categoryName);
 				Map<String, Long> subcategoriesToStatistics = getMultipleStatisticsMapping(entry.getKey(), player);
@@ -146,7 +149,7 @@ public class CategoryGUI extends AbstractGUI {
 			}
 		}
 		for (Entry<NormalAchievements, ItemStack> entry : normalAchievementItems.entrySet()) {
-			if (entry.getValue().getType() == item.getType() && entry.getValue().getDurability() == item.getDurability()) {
+			if (entry.getValue().isSimilar(item)) {
 				String categoryName = entry.getKey().toString();
 				List<String> achievementThresholds = getSortedNormalAchievementThresholds(categoryName);
 				long statistic = getNormalStatistic(entry.getKey(), player);
@@ -155,9 +158,9 @@ public class CategoryGUI extends AbstractGUI {
 				return;
 			}
 		}
-		List<String> achievementPaths = new ArrayList<>(mainConfig.getShallowKeys("Commands"));
-		displayPage("Commands", player, Collections.singletonMap(NO_SUBCATEGORY, NO_STAT), requestedPage, item,
-				achievementPaths);
+		List<String> achievementPaths = new ArrayList<>(mainConfig.getShallowKeys(CommandAchievements.COMMANDS.toString()));
+		displayPage(CommandAchievements.COMMANDS.toString(), player, Collections.singletonMap(NO_SUBCATEGORY, NO_STAT),
+				requestedPage, item, achievementPaths);
 	}
 
 	/**
@@ -193,14 +196,14 @@ public class CategoryGUI extends AbstractGUI {
 			String achName = mainConfig.getString(categoryName + '.' + previousAchievement + ".Name", "");
 			previousItemDate = databaseManager.getPlayerAchievementDate(player.getUniqueId(), achName);
 			if (previousAchievement.contains(".")) {
-				previousSubcategory = previousAchievement.split("\\.")[0];
+				previousSubcategory = StringUtils.substringBefore(previousAchievement, ".");
 			}
 		}
 		// Populate the current GUI page with all of the achievements for the category.
 		for (int index = pageStart; index < pageEnd; ++index) {
 			// Path can either be a threshold (eg '10', or a subcategory and threshold (eg 'skeleton.10').
 			String path = achievementPaths.get(index);
-			String subcategory = path.contains(".") ? path.split("\\.")[0] : NO_SUBCATEGORY;
+			String subcategory = path.contains(".") ? StringUtils.substringBefore(path, ".") : NO_SUBCATEGORY;
 			long statistic = subcategoriesToStatistics.get(subcategory);
 			String achName = mainConfig.getString(categoryName + '.' + path + ".Name", "");
 			String receptionDate = databaseManager.getPlayerAchievementDate(player.getUniqueId(), achName);
@@ -266,11 +269,11 @@ public class CategoryGUI extends AbstractGUI {
 		if (date != null) {
 			itemMeta.setDisplayName(translateColorCodes(langListAchievementReceived + name));
 		} else if (configObfuscateNotReceived || (configObfuscateProgressiveAchievements && ineligibleSeriesItem)) {
-			itemMeta.setDisplayName(translateColorCodes(langListAchievementNotReceived + "&k" +
-					randomiseParts(REGEX_PATTERN.matcher(name).replaceAll(""))));
+			itemMeta.setDisplayName(translateColorCodes(langListAchievementNotReceived
+					+ "&k" + StringHelper.removeFormattingCodes(name)));
 		} else {
-			itemMeta.setDisplayName(translateColorCodes(StringEscapeUtils
-					.unescapeJava(langListAchievementNotReceived + "&o" + REGEX_PATTERN.matcher(name).replaceAll(""))));
+			itemMeta.setDisplayName(translateColorCodes(StringEscapeUtils.unescapeJava(langListAchievementNotReceived
+					+ "&o" + StringHelper.removeFormattingCodes(name))));
 		}
 
 		itemMeta.setLore(lore);
@@ -419,7 +422,7 @@ public class CategoryGUI extends AbstractGUI {
 			lore.add("");
 		} else {
 			lore.add(langListGoal);
-			String strippedAchMessage = REGEX_PATTERN.matcher(description).replaceAll("");
+			String strippedAchMessage = StringHelper.removeFormattingCodes(description);
 			if (configObfuscateNotReceived || (configObfuscateProgressiveAchievements && ineligibleSeriesItem)) {
 				lore.add(translateColorCodes(configListColorNotReceived + "&k" + randomiseParts(strippedAchMessage)));
 			} else {
@@ -428,7 +431,7 @@ public class CategoryGUI extends AbstractGUI {
 			lore.add("");
 			// Display progress if not Commands category.
 			if (!configObfuscateNotReceived && statistic != NO_STAT) {
-				String threshold = path.contains(".") ? path.split("\\.")[1] : path;
+				String threshold = StringUtils.defaultIfEmpty(StringUtils.substringAfter(path, "."), path);
 				boolean timeStat = NormalAchievements.PLAYEDTIME.toString().equals(categoryName);
 				lore.add(langListProgress);
 				lore.add(translateColorCodes(constructProgressBar(strippedAchMessage, threshold, statistic, timeStat)));
@@ -469,7 +472,7 @@ public class CategoryGUI extends AbstractGUI {
 		// MinecraftFont essentially supports latin alphabet characters. If invalid characters are found just use
 		// number of chars.
 		if (FONT.isValid(achMessage)) {
-			textSize = FONT.getWidth(REGEX_PATTERN.matcher(achMessage).replaceAll(""));
+			textSize = FONT.getWidth(StringHelper.removeFormattingCodes(achMessage));
 		} else {
 			textSize = achMessage.length() * 3;
 		}
